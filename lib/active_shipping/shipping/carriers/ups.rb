@@ -127,6 +127,91 @@ module ActiveMerchant
         end
       end
       
+      def build_label_node(root_node)
+        root_node << XmlNode.new("LabelSpecification") do |label|
+          label << XmlNode.new("LabelImageFormat") do |format|
+            format << XmlNode.new('Code', 'GIF')
+          end
+          label << XmlNode.new("HTTPUserAgent", "Mozilla/5.0")
+          label << XmlNode.new("LabelStockSize") do |size|
+            size << XmlNode.new("Height", "6")
+            size << XmlNode.new("Width", "4")
+          end
+        end
+      end
+      
+      def build_shipment_node(root_node, origin, destination, packages, options)
+        packages = Array(packages)
+        root_node << XmlNode.new('Shipment') do |shipment|
+          shipment << XmlNode.new("Description", options[:description]) if options[:description]
+          
+          shipment << build_location_node('Shipper', (options[:shipper] || origin), options)
+          shipment << build_location_node('ShipTo', destination, options)
+          if options[:shipper] and options[:shipper] != origin
+            shipment << build_location_node('ShipFrom', origin, options)
+          end
+          
+          shipment << XmlNode.new('NegotiatedRatesIndicator') if options[:negotiated_rates]
+          
+          
+          # not implemented:  * Shipment/ShipmentWeight element
+          #                   * Shipment/ReferenceNumber element                    
+          #                   * Shipment/Service element                            
+          #                   * Shipment/PickupDate element                         
+          #                   * Shipment/ScheduledDeliveryDate element              
+          #                   * Shipment/ScheduledDeliveryTime element              
+          #                   * Shipment/AlternateDeliveryTime element              
+          #                   * Shipment/DocumentsOnly element                      
+          
+          packages.each do |package|
+            debugger if package.nil?
+            
+            
+            imperial = ['US','LR','MM'].include?(origin.country_code(:alpha2))
+            
+            shipment << XmlNode.new("Package") do |package_node|
+              
+              # not implemented:  * Shipment/Package/PackagingType element
+              #                   * Shipment/Package/Description element
+              
+              package_node << XmlNode.new("PackagingType") do |packaging_type|
+                packaging_type << XmlNode.new("Code", '02')
+              end
+              
+              package_node << XmlNode.new("Dimensions") do |dimensions|
+                dimensions << XmlNode.new("UnitOfMeasurement") do |units|
+                  units << XmlNode.new("Code", imperial ? 'IN' : 'CM')
+                end
+                [:length,:width,:height].each do |axis|
+                  value = ((imperial ? package.inches(axis) : package.cm(axis)).to_f*1000).round/1000.0 # 3 decimals
+                  dimensions << XmlNode.new(axis.to_s.capitalize, [value,0.1].max)
+                end
+              end
+            
+              package_node << XmlNode.new("PackageWeight") do |package_weight|
+                package_weight << XmlNode.new("UnitOfMeasurement") do |units|
+                  units << XmlNode.new("Code", imperial ? 'LBS' : 'KGS')
+                end
+                
+                value = ((imperial ? package.lbs : package.kgs).to_f*1000).round/1000.0 # 3 decimals
+                package_weight << XmlNode.new("Weight", [value,0.1].max)
+              end
+            
+              # not implemented:  * Shipment/Package/LargePackageIndicator element
+              #                   * Shipment/Package/ReferenceNumber element
+              #                   * Shipment/Package/PackageServiceOptions element
+              #                   * Shipment/Package/AdditionalHandling element  
+            end
+            
+          end
+          
+          
+          # not implemented:  * Shipment/ShipmentServiceOptions element
+          #                   * Shipment/RateInformation element
+          
+        end
+      end
+      
       def build_access_request
         xml_request = XmlNode.new('AccessRequest') do |access_request|
           access_request << XmlNode.new('AccessLicenseNumber', @options[:key])
@@ -136,8 +221,18 @@ module ActiveMerchant
         xml_request.to_s
       end
       
+      def build_ship_request(origin, destination, packages, options = {})
+        xml_request - XmlNode.new('ShipmentRequest') do |root_node|
+          root_node << XMlNode.new('Request') do |request|
+            request << XmlNode.new('RequestOption', 'nonvalidate')
+          end
+          build_shipment_node(root_node, origin, destination, packages, options)
+          build_label_node(root_node)
+          
+        end
+      end
+      
       def build_rate_request(origin, destination, packages, options={})
-        packages = Array(packages)
         xml_request = XmlNode.new('RatingServiceSelectionRequest') do |root_node|
           root_node << XmlNode.new('Request') do |request|
             request << XmlNode.new('RequestAction', 'Rate')
@@ -157,69 +252,7 @@ module ActiveMerchant
             cc_node << XmlNode.new('Code', CUSTOMER_CLASSIFICATIONS[cc])
           end
           
-          root_node << XmlNode.new('Shipment') do |shipment|
-            # not implemented: Shipment/Description element
-            shipment << build_location_node('Shipper', (options[:shipper] || origin), options)
-            shipment << build_location_node('ShipTo', destination, options)
-            if options[:shipper] and options[:shipper] != origin
-              shipment << build_location_node('ShipFrom', origin, options)
-            end
-            
-            # not implemented:  * Shipment/ShipmentWeight element
-            #                   * Shipment/ReferenceNumber element                    
-            #                   * Shipment/Service element                            
-            #                   * Shipment/PickupDate element                         
-            #                   * Shipment/ScheduledDeliveryDate element              
-            #                   * Shipment/ScheduledDeliveryTime element              
-            #                   * Shipment/AlternateDeliveryTime element              
-            #                   * Shipment/DocumentsOnly element                      
-            
-            packages.each do |package|
-              debugger if package.nil?
-              
-              
-              imperial = ['US','LR','MM'].include?(origin.country_code(:alpha2))
-              
-              shipment << XmlNode.new("Package") do |package_node|
-                
-                # not implemented:  * Shipment/Package/PackagingType element
-                #                   * Shipment/Package/Description element
-                
-                package_node << XmlNode.new("PackagingType") do |packaging_type|
-                  packaging_type << XmlNode.new("Code", '02')
-                end
-                
-                package_node << XmlNode.new("Dimensions") do |dimensions|
-                  dimensions << XmlNode.new("UnitOfMeasurement") do |units|
-                    units << XmlNode.new("Code", imperial ? 'IN' : 'CM')
-                  end
-                  [:length,:width,:height].each do |axis|
-                    value = ((imperial ? package.inches(axis) : package.cm(axis)).to_f*1000).round/1000.0 # 3 decimals
-                    dimensions << XmlNode.new(axis.to_s.capitalize, [value,0.1].max)
-                  end
-                end
-              
-                package_node << XmlNode.new("PackageWeight") do |package_weight|
-                  package_weight << XmlNode.new("UnitOfMeasurement") do |units|
-                    units << XmlNode.new("Code", imperial ? 'LBS' : 'KGS')
-                  end
-                  
-                  value = ((imperial ? package.lbs : package.kgs).to_f*1000).round/1000.0 # 3 decimals
-                  package_weight << XmlNode.new("Weight", [value,0.1].max)
-                end
-              
-                # not implemented:  * Shipment/Package/LargePackageIndicator element
-                #                   * Shipment/Package/ReferenceNumber element
-                #                   * Shipment/Package/PackageServiceOptions element
-                #                   * Shipment/Package/AdditionalHandling element  
-              end
-              
-            end
-            
-            # not implemented:  * Shipment/ShipmentServiceOptions element
-            #                   * Shipment/RateInformation element
-            
-          end
+          build_shipment_node(root_node, origin, destination, packages, options)
           
         end
         xml_request.to_s
